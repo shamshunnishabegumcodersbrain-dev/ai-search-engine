@@ -25,7 +25,7 @@ export default function AIAnswer({ answer, source }) {
               <span className="text-blue-800 dark:text-blue-200 font-bold text-base">AI Answer</span>
               {/* "Better than Google" badge */}
               <span className="text-xs px-2 py-0.5 bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-full font-semibold shadow-sm">
-                ✦ Powered by Llama 3.3 70B
+
               </span>
             </div>
             <span className="text-xs text-blue-500 dark:text-blue-400">

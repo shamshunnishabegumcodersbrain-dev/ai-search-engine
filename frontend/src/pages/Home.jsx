@@ -70,7 +70,7 @@ function AboutModal({ onClose }) {
           AI Search combines Google Search results with Groq's Llama 3 AI to give you fast, intelligent answers.
           Voice search supports multiple Indian languages via Groq Whisper.
         </p>
-        <p className="text-xs text-gray-400 mb-4">Powered by: Groq · Llama 3.3 70B · SerpAPI · ChromaDB</p>
+
         <button onClick={onClose} className="w-full py-3 bg-blue-600 text-white text-sm rounded-full hover:bg-blue-700">Close</button>
       </div>
     </div>

@@ -42,7 +42,7 @@ export default function Logo({ size = 'lg' }) {
           <span className="text-gray-800 dark:text-gray-100">Search</span>
         </h1>
         <p className="text-gray-400 dark:text-gray-500 text-sm mt-1.5 font-medium">
-          Powered by Groq · Llama 3.3 70B · Google
+
         </p>
       </div>
     </div>
