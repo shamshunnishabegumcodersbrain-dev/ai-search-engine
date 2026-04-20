@@ -3,14 +3,14 @@ import time
 import requests
 from loguru import logger
 from dotenv import load_dotenv
-from rag.llama_service import generate_answer, generate_knowledge_panel
+from rag.llama_service import generate_answer, generate_knowledge_panel, detect_comparison, generate_comparison
 
 load_dotenv()
 
 SERP_API_KEY = os.getenv("SERP_API_KEY", "")
 
 
-def google_search(query: str, page: int = 1, page_size: int = 10, search_type: str = "web") -> dict:
+def google_search(query: str, page: int = 1, page_size: int = 10, search_type: str = "web", safe_search: bool = True, tbs: str = "") -> dict:
     """
     Search using SerpAPI. Returns full enriched payload including:
     - results, total_results, total_pages
@@ -29,12 +29,21 @@ def google_search(query: str, page: int = 1, page_size: int = 10, search_type: s
             "api_key": SERP_API_KEY,
             "num": page_size,
             "start": (page - 1) * page_size,
+            # ── Safe search ───────────────────────────────────────────────────
+            # "active" = filter adult content ON, "off" = no filter
+            "safe": "active" if safe_search else "off",
         }
+
+        # ── Time filter ───────────────────────────────────────────────────────
+        if tbs:
+            params["tbs"] = tbs
 
         if search_type == "news":
             params["tbm"] = "nws"
         elif search_type == "images":
             params["tbm"] = "isch"
+        elif search_type == "videos":
+            params["tbm"] = "vid"
 
         response = requests.get("https://serpapi.com/search", params=params, timeout=15)
         response.raise_for_status()
@@ -47,6 +56,8 @@ def google_search(query: str, page: int = 1, page_size: int = 10, search_type: s
             items = data.get("news_results", [])
         elif search_type == "images":
             items = data.get("images_results", [])
+        elif search_type == "videos":
+            items = data.get("video_results", [])
 
         for i, item in enumerate(items):
             source_field = item.get("source", {})
@@ -123,7 +134,7 @@ def google_search(query: str, page: int = 1, page_size: int = 10, search_type: s
                 },
             }
 
-        logger.info(f"SerpAPI returned {len(results)} results, total={total_results}")
+        logger.info(f"SerpAPI returned {len(results)} results, total={total_results}, safe={safe_search}")
 
         return {
             "results": results,
@@ -166,20 +177,21 @@ def _looks_like_entity(query: str) -> bool:
     question_words = {"what", "why", "how", "when", "where", "who", "which", "is", "are", "does", "do"}
     if words[0].lower() in question_words:
         return False
-    # At least one word starts with a capital letter (not just the first word of a sentence)
     capitalised = sum(1 for w in words if w and w[0].isupper())
     return capitalised >= 1
 
 
-def run_search_pipeline(query: str, page: int = 1, page_size: int = 10, search_type: str = "web") -> dict:
+def run_search_pipeline(query: str, page: int = 1, page_size: int = 10, search_type: str = "web", safe_search: bool = True, tbs: str = "") -> dict:
     """
     Main search pipeline. Runs web search + AI answer + AI knowledge panel fallback.
     Returns fully enriched response ready for the frontend.
+    safe_search: True = filter adult content (default), False = off
+    tbs: SerpAPI time filter string e.g. "qdr:d" for past day
     """
     start_time = time.time()
 
     try:
-        search_data = google_search(query, page, page_size, search_type)
+        search_data = google_search(query, page, page_size, search_type, safe_search=safe_search, tbs=tbs)
         results = search_data["results"]
 
         context_chunks = [
@@ -191,6 +203,16 @@ def run_search_pipeline(query: str, page: int = 1, page_size: int = 10, search_t
         source = "google_search" if results else "ai_general"
 
         ai_answer = generate_answer(query, context_chunks)
+
+        # ── Comparison mode: detect "X vs Y" queries ─────────────────────────
+        comparison = None
+        compare_pair = detect_comparison(query)
+        if compare_pair and search_type == "web":
+            item_a, item_b = compare_pair
+            logger.info(f"Comparison query detected: '{item_a}' vs '{item_b}'")
+            comparison = generate_comparison(item_a, item_b, context_chunks)
+            if comparison:
+                logger.info(f"Comparison table generated — {len(comparison['rows'])} rows")
 
         # Use SerpAPI knowledge panel if available; otherwise generate with AI for entity queries
         knowledge_panel = search_data["knowledge_panel"]
@@ -209,6 +231,7 @@ def run_search_pipeline(query: str, page: int = 1, page_size: int = 10, search_t
             "page": page,
             "page_size": page_size,
             "search_type": search_type,
+            "safe_search": safe_search,
             "total_results": search_data["total_results"],
             "total_pages": search_data["total_pages"],
             "results": results,
@@ -216,6 +239,7 @@ def run_search_pipeline(query: str, page: int = 1, page_size: int = 10, search_t
             "related_searches": search_data["related_searches"],
             "people_also_ask": search_data["people_also_ask"],
             "knowledge_panel": knowledge_panel,
+            "comparison": comparison,
             "latency_ms": latency_ms,
         }
 
@@ -228,6 +252,7 @@ def run_search_pipeline(query: str, page: int = 1, page_size: int = 10, search_t
             "page": page,
             "page_size": page_size,
             "search_type": search_type,
+            "safe_search": safe_search,
             "total_results": 0,
             "total_pages": 0,
             "results": [],
@@ -235,5 +260,33 @@ def run_search_pipeline(query: str, page: int = 1, page_size: int = 10, search_t
             "related_searches": [],
             "people_also_ask": [],
             "knowledge_panel": None,
+            "comparison": None,
             "latency_ms": 0,
         }
+
+
+def summarize_url(url: str) -> str:
+    """
+    Fetch a webpage and return a 3-sentence AI summary.
+    Called by the /summarize endpoint.
+    """
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+
+        # Very basic text extraction — strip tags
+        import re
+        text = re.sub(r"<[^>]+>", " ", resp.text)
+        text = re.sub(r"\s+", " ", text).strip()
+        text = text[:3000]  # limit context
+
+        from rag.llama_service import generate_answer
+        summary = generate_answer(
+            f"Summarize this webpage content in exactly 3 clear sentences:",
+            [text]
+        )
+        return summary
+    except Exception as e:
+        logger.error(f"summarize_url failed for {url}: {e}")
+        return "Could not summarize this page. The site may have blocked access."

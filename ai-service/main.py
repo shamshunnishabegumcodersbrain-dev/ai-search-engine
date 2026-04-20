@@ -19,7 +19,7 @@ from scraper.spider import scrape_all
 from scraper.cleaner import clean_document, chunk_text
 from embeddings.vectorize import embed_text, embed_batch
 from embeddings.chromadb_store import add_documents, clear_collection, get_document_count
-from rag.pipeline import run_search_pipeline
+from rag.pipeline import run_search_pipeline, summarize_url
 from rag.llama_service import check_groq_health
 from scraper.scheduler import start_scheduler
 from cache.redis_cache import get_cached, set_cached
@@ -106,7 +106,13 @@ class SearchRequest(BaseModel):
     query: str
     page: int = 1
     page_size: int = 10
-    search_type: str = "web"  # web | news | images
+    search_type: str = "web"  # web | news | images | videos
+    tbs: str = ""             # time filter: qdr:h | qdr:d | qdr:w | qdr:m | qdr:y
+
+
+class SummarizeRequest(BaseModel):
+    url: str
+    title: str = ""
 
 
 class VoiceTranscribeRequest(BaseModel):
@@ -152,10 +158,10 @@ async def search(request: SearchRequest):
         request.page = 1
     if request.page_size < 1 or request.page_size > 50:
         request.page_size = 10
-    if request.search_type not in ["web", "news", "images"]:
+    if request.search_type not in ["web", "news", "images", "videos"]:
         request.search_type = "web"
 
-    logger.info(f"Search request — query: '{request.query}' page: {request.page} type: {request.search_type}")
+    logger.info(f"Search request — query: '{request.query}' page: {request.page} type: {request.search_type} tbs: {request.tbs}")
 
     cached = get_cached(request.query, request.page, request.page_size, request.search_type)
     if cached:
@@ -167,11 +173,28 @@ async def search(request: SearchRequest):
         page=request.page,
         page_size=request.page_size,
         search_type=request.search_type,
+        tbs=request.tbs,
     )
 
     set_cached(request.query, request.page, request.page_size, request.search_type, result)
     result["from_cache"] = False
     return result
+
+
+# ─── Summarize ───────────────────────────────────────────────────────────────
+
+@app.post("/summarize")
+async def summarize(request: SummarizeRequest):
+    """
+    Fetch a webpage and summarize it in 3 sentences using Groq.
+    This is a feature Google doesn't offer.
+    """
+    if not request.url or not request.url.startswith("http"):
+        raise HTTPException(status_code=400, detail="A valid URL is required")
+
+    logger.info(f"Summarize request — url: {request.url[:80]}")
+    summary = summarize_url(request.url, request.title)
+    return {"success": True, "summary": summary, "url": request.url}
 
 
 # ─── Scrape ──────────────────────────────────────────────────────────────────

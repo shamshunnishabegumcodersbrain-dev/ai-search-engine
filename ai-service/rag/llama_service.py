@@ -142,6 +142,135 @@ def generate_knowledge_panel(entity: str, context: str = "") -> dict | None:
         return None
 
 
+def detect_comparison(query: str) -> tuple[str, str] | None:
+    """
+    Detect if the query is a comparison like "X vs Y" or "X versus Y".
+    Returns (item_a, item_b) tuple if it is, or None if it's not.
+
+    Examples:
+      "iPhone vs Samsung"         → ("iPhone", "Samsung")
+      "Python vs JavaScript"      → ("Python", "JavaScript")
+      "React versus Vue"          → ("React", "Vue")
+      "iPhone 15 vs Samsung S24"  → ("iPhone 15", "Samsung S24")
+      "best laptop"               → None
+    """
+    import re
+    # Match "X vs Y", "X versus Y", "X vs. Y" — case insensitive
+    pattern = re.compile(
+        r'^(.+?)\s+(?:vs\.?|versus)\s+(.+)$',
+        re.IGNORECASE
+    )
+    match = pattern.match(query.strip())
+    if match:
+        item_a = match.group(1).strip()
+        item_b = match.group(2).strip()
+        # Both sides must be at least 2 chars and not just stopwords
+        if len(item_a) >= 2 and len(item_b) >= 2:
+            return (item_a, item_b)
+    return None
+
+
+def generate_comparison(item_a: str, item_b: str, context_chunks: list) -> dict | None:
+    """
+    Generate a structured side-by-side comparison table using Groq.
+    Returns a dict ready to pass directly to the ComparePanel component, or None on failure.
+
+    Return shape:
+    {
+        "item_a": str,
+        "item_b": str,
+        "winner": "a" | "b" | "tie",
+        "verdict": str,       # 1-2 sentence summary
+        "rows": [
+            {
+                "category": str,
+                "a": str,
+                "b": str,
+                "winner": "a" | "b" | "tie"
+            },
+            ...  # 6-8 rows
+        ]
+    }
+    """
+    system_prompt = (
+        "You are an expert comparison assistant. "
+        "When given two items to compare, output a JSON object with this EXACT structure:\n"
+        "{\n"
+        '  "item_a": "first item name",\n'
+        '  "item_b": "second item name",\n'
+        '  "winner": "a" or "b" or "tie",\n'
+        '  "verdict": "1-2 sentence summary explaining which is better and why, or why it is a tie",\n'
+        '  "rows": [\n'
+        '    { "category": "Category Name", "a": "value for item_a", "b": "value for item_b", "winner": "a" or "b" or "tie" },\n'
+        "    ... 6 to 8 rows total\n"
+        "  ]\n"
+        "}\n\n"
+        "Rules:\n"
+        "- Pick 6-8 meaningful comparison categories relevant to these specific items\n"
+        "- Each value should be 1-2 sentences max, factual and specific\n"
+        "- winner field per row: set 'a' if item_a is better in that category, 'b' if item_b, 'tie' if equal\n"
+        "- Overall winner: be decisive — pick 'a', 'b', or 'tie' based on the rows\n"
+        "- Output ONLY valid JSON. No markdown, no explanation, no extra text."
+    )
+
+    context_text = ""
+    if context_chunks:
+        context_text = f"\n\nWeb search context:\n" + "\n\n".join(context_chunks[:5])
+
+    user_prompt = (
+        f"Compare: {item_a} vs {item_b}{context_text}\n\n"
+        f"Generate a detailed comparison table."
+    )
+
+    try:
+        result = _call_groq(system_prompt, user_prompt, max_tokens=900)
+        if not result:
+            return None
+
+        # Strip markdown code fences if model adds them
+        cleaned = result.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("```")[1]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+
+        data = json.loads(cleaned)
+
+        # Validate required fields
+        if not data.get("rows") or not isinstance(data["rows"], list):
+            logger.warning("Comparison JSON missing rows")
+            return None
+
+        # Normalise winner values
+        def norm(w):
+            return w if w in ("a", "b", "tie") else "tie"
+
+        return {
+            "item_a": data.get("item_a", item_a),
+            "item_b": data.get("item_b", item_b),
+            "winner": norm(data.get("winner", "tie")),
+            "verdict": data.get("verdict", ""),
+            "rows": [
+                {
+                    "category": row.get("category", ""),
+                    "a": row.get("a", ""),
+                    "b": row.get("b", ""),
+                    "winner": norm(row.get("winner", "tie")),
+                }
+                for row in data["rows"]
+                if row.get("category") and row.get("a") and row.get("b")
+            ],
+        }
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Comparison JSON parse failed: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"generate_comparison failed: {e}")
+        return None
+
+
 def check_groq_health() -> bool:
     """Returns True if Groq API key is configured."""
     return bool(GROQ_API_KEY)

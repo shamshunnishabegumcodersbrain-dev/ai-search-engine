@@ -12,4 +12,26 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
   background-color: #f9fafb;
   color: #111827;
+  /* Prevent horizontal overflow on mobile */
+  overflow-x: hidden;
+}
+
+/* ── Mobile: prevent input zoom on iOS (font-size must be >= 16px) ── */
+@media (max-width: 640px) {
+  input[type="text"],
+  input[type="search"],
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* ── Smooth tap highlight removal on mobile ── */
+button, a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Safe area padding for notched phones (iPhone X+) ── */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
 }

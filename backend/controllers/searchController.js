@@ -67,6 +67,7 @@ const search = async (req, res, next) => {
       related_searches: data.related_searches || [],
       people_also_ask: data.people_also_ask || [],
       knowledge_panel: data.knowledge_panel || null,
+      comparison: data.comparison || null,   // ← compare mode: "X vs Y" queries
       // Meta
       latency_ms: data.latency_ms || latency,
       formatted_result_count: formattedTotal,

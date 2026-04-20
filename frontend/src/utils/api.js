@@ -12,7 +12,8 @@ export async function searchQuery(
   page = 1,
   pageSize = 10,
   searchType = 'web',
-  signal = null
+  signal = null,
+  tbs = ''          // ← NEW: time-based filter e.g. 'qdr:d'
 ) {
   const response = await api.get('/api/search', {
     params: {
@@ -20,6 +21,7 @@ export async function searchQuery(
       page,
       page_size: pageSize,
       search_type: searchType,
+      ...(tbs && { tbs }),   // only include if set
     },
     signal,
   });
@@ -27,9 +29,9 @@ export async function searchQuery(
 }
 
 export default api;
+
 /**
  * Send base64 audio to backend for Groq Whisper transcription.
- * Falls back gracefully if backend not available.
  */
 export async function transcribeVoice(audioBase64, language = 'en', audioFormat = 'webm') {
   const response = await api.post('/api/voice-transcribe', {
@@ -37,5 +39,14 @@ export async function transcribeVoice(audioBase64, language = 'en', audioFormat 
     language,
     audio_format: audioFormat,
   });
+  return response.data;
+}
+
+/**
+ * Summarize a webpage via the backend.
+ * Returns { summary: string }
+ */
+export async function summarizePage(url, title = '') {
+  const response = await api.post('/api/summarize', { url, title });
   return response.data;
 }

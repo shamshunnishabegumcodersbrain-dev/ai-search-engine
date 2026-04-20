@@ -11,6 +11,7 @@ const searchRoutes = require('./routes/search');
 const healthRoutes = require('./routes/health');
 const scrapeRoutes = require('./routes/scrape');
 const voiceRoutes = require('./routes/voice');
+const summarizeRoutes = require('./routes/summarize');  // ← NEW
 
 dotenv.config();
 
@@ -49,6 +50,7 @@ app.use('/api', searchRoutes);
 app.use('/api', healthRoutes);
 app.use('/api', scrapeRoutes);
 app.use('/api', voiceRoutes);
+app.use('/api', summarizeRoutes);  // ← NEW
 
 // 404 handler
 app.use((req, res) => {
